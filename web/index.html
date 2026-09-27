@@ -13,6 +13,7 @@
       <button data-page="overview" class="active">总览</button>
       <button data-page="cranes">机群</button>
       <button data-page="zones">防碰撞区</button>
+      <button data-page="hold">回转保持</button>
       <button data-page="hoist">吊装</button>
       <button data-page="alarms">告警</button>
       <button data-page="config">配置</button>
@@ -44,6 +45,20 @@
         <button id="clear-conflict-btn">解除冲突</button>
         <button id="slew-start-btn">启动回转</button>
       </div>
+    </section>
+
+    <section id="page-hold" class="hidden">
+      <h2>回转到位保持</h2>
+      <pre id="hold-data"></pre>
+      <div class="actions">
+        <button id="hold-slew-start-btn">启动回转</button>
+        <button id="hold-slew-stop-btn">到位停止（自动保持）</button>
+        <button id="hold-drift-small-btn">模拟风漂 +0.8°</button>
+        <button id="hold-drift-big-btn">模拟风漂 +3.0°</button>
+        <button id="hold-confirm-btn">现场确认解锁</button>
+      </div>
+      <h2>漂移与回正记录</h2>
+      <pre id="hold-events"></pre>
     </section>
 
     <section id="page-hoist" class="hidden">

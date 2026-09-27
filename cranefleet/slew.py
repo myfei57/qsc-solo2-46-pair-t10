@@ -187,6 +187,17 @@ def stop(slew: Slew, recorder: Audit | None = None) -> None:
         recorder.record(slew.id, "slew-stop", "moving=" + str(was_moving).lower())
 
 
+def align(slew: Slew, angle: float) -> None:
+    """Set the slew to an absolute angle outside of operator motion.
+
+    Used for two non-commanded angle changes: accepting an encoder reading that
+    reflects wind drift, and the position-hold correction back to target.
+    """
+
+    with slew._lock:  # noqa: SLF001
+        slew.angle = angle
+
+
 def stop_for_wind(slew: Slew, recorder: Audit | None, sequence: int) -> StopStatus:
     """Stop the slew as the first half of the wind stop order."""
 
@@ -233,6 +244,13 @@ def stop_sequence(slew: Slew, axis: str) -> int:
 def release_wind_hold(slew: Slew) -> None:
     with slew._lock:  # noqa: SLF001
         slew.wind_held = False
+
+
+def release_stop(slew: Slew) -> None:
+    """Clear the latching stop flag so the slew can be started again."""
+
+    with slew._lock:  # noqa: SLF001
+        slew.stopped = False
 
 
 def release_latch_hold(slew: Slew) -> None:

@@ -1,5 +1,7 @@
 const $ = (id) => document.getElementById(id);
 
+let lastHold = {};
+
 async function api(path, options) {
   const response = await fetch(path, options);
   return response.json();
@@ -49,16 +51,21 @@ async function refresh() {
   const data = state.data || {};
   const zone = data.zone || {};
   const slew = data.slew || {};
+  const hold = data.hold || {};
   const hoist = data.hoist || {};
   const wind = data.wind || {};
   const limit = data.limit || {};
   const cluster = data.cluster || {};
   const pair = cluster.nearest_pair || {};
+  lastHold = hold;
+  const holdLabel = hold.locked ? "锁定待确认" : hold.engaged ? "保持中" : "未保持";
   renderCards([
     ["塔吊数量", Object.keys(cluster.positions || {}).length],
     ["分区占用", (zone.occupants || []).length, zone.conflict ? "danger" : ""],
     ["冲突闩锁", zone.latch ? "锁定" : "释放", zone.latch ? "danger" : ""],
     ["回转状态", slew.moving ? "运转" : "停止", wind.active ? "warn" : ""],
+    ["回转保持", holdLabel, hold.locked ? "danger" : hold.engaged ? "warn" : ""],
+    ["当前漂移", (hold.drift || 0).toFixed(2) + "°", hold.locked ? "danger" : ""],
     ["落钩状态", hoist.hook_lowered ? "已落钩" : "未落钩", hoist.hook_lowered ? "" : "warn"],
     ["制动状态", hoist.brake_engaged ? "抱闸" : "松闸"],
     ["风速", (wind.level || 0).toFixed(1) + " m/s", wind.active ? "danger" : ""],
@@ -68,9 +75,12 @@ async function refresh() {
   ]);
   $("crane-data").textContent = JSON.stringify(cluster, null, 2);
   $("zone-data").textContent = JSON.stringify(zone, null, 2);
+  $("hold-data").textContent = JSON.stringify(hold, null, 2);
   $("hoist-data").textContent = JSON.stringify(hoist, null, 2);
   $("alarm-data").textContent = JSON.stringify({ wind, limit }, null, 2);
   $("config-data").textContent = JSON.stringify(data.config || {}, null, 2);
+  const holdEvents = await api("/api/hold/events?limit=30");
+  $("hold-events").textContent = JSON.stringify(holdEvents.data || [], null, 2);
   const audit = await api("/api/audit?limit=15");
   $("audit-data").textContent = JSON.stringify(audit.data || [], null, 2);
   $("overview-log").textContent = JSON.stringify((audit.data || []).slice(0, 5), null, 2);
@@ -114,6 +124,31 @@ $("clear-conflict-btn").addEventListener("click", async () => {
 
 $("slew-start-btn").addEventListener("click", async () => {
   await post("/api/slew/start");
+  refresh();
+});
+
+$("hold-slew-start-btn").addEventListener("click", async () => {
+  await post("/api/slew/start");
+  refresh();
+});
+
+$("hold-slew-stop-btn").addEventListener("click", async () => {
+  await post("/api/slew/stop");
+  refresh();
+});
+
+$("hold-drift-small-btn").addEventListener("click", async () => {
+  await post("/api/hold/track", { angle: (lastHold.target || 0) + 0.8 });
+  refresh();
+});
+
+$("hold-drift-big-btn").addEventListener("click", async () => {
+  await post("/api/hold/track", { angle: (lastHold.target || 0) + 3.0 });
+  refresh();
+});
+
+$("hold-confirm-btn").addEventListener("click", async () => {
+  await post("/api/hold/confirm");
   refresh();
 });
 

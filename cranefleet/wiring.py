@@ -17,6 +17,8 @@ from .crane import Crane
 from .errors import StoreNotFound
 from .geometry import Point
 from .hoist import Hoist
+from . import hold as hold_module
+from .hold import Hold
 from .limit import Limit
 from .slew import Slew, SpeedFeedback
 from .store import FileStore, MemoryStore, Store, decode_snapshot, encode_snapshot
@@ -81,6 +83,8 @@ def build_app(data_dir: str = "data", web_root: str = "web") -> App:
     restore_audit(store, audit)
     feedback = SpeedFeedback("crane-1")
     slew_module.restore_feedback(feedback, store)
+    hold = Hold("crane-1")
+    hold_module.restore_hold(hold, store)
     cranes = {"crane-1": Crane("crane-1")}
     config = site_config.load_config(store)
 
@@ -96,6 +100,7 @@ def build_app(data_dir: str = "data", web_root: str = "web") -> App:
         audit=audit,
         cranes=cranes,
         feedback=feedback,
+        hold=hold,
         config=config,
         web_root=web_root,
     )

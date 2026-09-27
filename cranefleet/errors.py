@@ -51,6 +51,14 @@ class SlewIdle(SlewError):
     """Raised when a swing is applied while the slew is not moving."""
 
 
+class HoldError(CraneFleetError):
+    """Base class for position-hold failures."""
+
+
+class HoldNotEngaged(HoldError):
+    """Raised when drift is tracked while the position hold is disengaged."""
+
+
 class TrolleyError(CraneFleetError):
     """Base class for trolley failures."""
 

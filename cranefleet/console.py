@@ -15,6 +15,7 @@ from . import cluster as fleet
 from . import config as site_config
 from . import crane as crane_module
 from . import hoist as hoist_module
+from . import hold as hold_module
 from . import limit as limit_module
 from . import slew as slew_module
 from . import trolley as trolley_module
@@ -29,6 +30,7 @@ from .errors import (
     CraneFleetError,
     FeedbackNotConfirmed,
     HoistBusy,
+    HoldNotEngaged,
     HookNotLowered,
     SlewBlocked,
     SlewBusy,
@@ -38,6 +40,7 @@ from .errors import (
     ZoneNotDurable,
 )
 from .hoist import Drum, Hoist
+from .hold import Hold
 from .limit import Limit
 from .slew import Ramp, Slew, SpeedFeedback
 from .store import Store
@@ -94,6 +97,7 @@ class Console:
         audit: Audit,
         cranes: dict[str, Crane],
         feedback: SpeedFeedback,
+        hold: Hold,
         config: SiteConfig,
         web_root: str = "web",
     ) -> None:
@@ -108,6 +112,7 @@ class Console:
         self.audit = audit
         self.cranes = cranes
         self.feedback = feedback
+        self.hold = hold
         self.config = config
         self.web_root = web_root
         self.ramp = Ramp()
@@ -127,6 +132,11 @@ class Console:
             ("POST", "/api/slew/stop"): self.handle_slew_stop,
             ("POST", "/api/slew/target"): self.handle_slew_target,
             ("POST", "/api/slew/fault"): self.handle_slew_fault,
+            ("GET", "/api/hold/state"): self.handle_hold_state,
+            ("POST", "/api/hold/engage"): self.handle_hold_engage,
+            ("POST", "/api/hold/track"): self.handle_hold_track,
+            ("POST", "/api/hold/confirm"): self.handle_hold_confirm,
+            ("GET", "/api/hold/events"): self.handle_hold_events,
             ("POST", "/api/wind/alarm"): self.handle_wind_alarm,
             ("POST", "/api/wind/clear"): self.handle_wind_clear,
             ("POST", "/api/crane/command"): self.handle_crane_command,
@@ -249,6 +259,8 @@ class Console:
     def handle_slew_start(self, request: Request) -> tuple[int, dict[str, Any]]:
         if zone_module.is_latched(self.zone):
             return 409, fail("zone latch held")
+        if hold_module.is_locked(self.hold):
+            return 409, fail("position hold locked: on-site confirmation required")
         try:
             slew_module.start(self.slew, self.zone, self.store, self.audit)
         except ZoneNotDurable:
@@ -259,10 +271,14 @@ class Console:
             return 409, fail("slew already moving")
         except CraneFleetError as exc:
             return 409, fail(str(exc))
+        hold_module.disengage(self.hold, self.audit)
+        self._persist_hold()
         return 200, ok(views.slew_view(self))
 
     def handle_slew_stop(self, request: Request) -> tuple[int, dict[str, Any]]:
         slew_module.stop(self.slew, self.audit)
+        hold_module.engage(self.hold, self.slew.angle_now(), recorder=self.audit)
+        self._persist_hold()
         return 200, ok(views.slew_view(self))
 
     def handle_slew_target(self, request: Request) -> tuple[int, dict[str, Any]]:
@@ -279,6 +295,65 @@ class Console:
         slew_module.set_fault(self.slew, faulted)
         self.audit.record(self.slew.id, "slew-fault", f"faulted={str(faulted).lower()}")
         return 200, ok(views.slew_view(self))
+
+    # ------------------------------------------------------------------- hold
+
+    def handle_hold_state(self, request: Request) -> tuple[int, dict[str, Any]]:
+        return 200, ok(views.hold_view(self))
+
+    def handle_hold_engage(self, request: Request) -> tuple[int, dict[str, Any]]:
+        if not request.body_valid:
+            return 400, fail("bad request")
+        angle = self.slew.angle_now()
+        if "angle" in request.body:
+            try:
+                angle = float(request.body["angle"])
+            except (TypeError, ValueError):
+                return 400, fail("angle must be a number")
+        tolerance: float | None = None
+        if "tolerance" in request.body:
+            try:
+                tolerance = float(request.body["tolerance"])
+            except (TypeError, ValueError):
+                return 400, fail("tolerance must be a number")
+            if tolerance <= 0:
+                return 400, fail("tolerance must be positive")
+        hold_module.engage(self.hold, angle, tolerance, self.audit)
+        slew_module.align(self.slew, angle)
+        self._persist_hold()
+        return 200, ok(views.hold_view(self))
+
+    def handle_hold_track(self, request: Request) -> tuple[int, dict[str, Any]]:
+        if not request.body_valid:
+            return 400, fail("bad request")
+        try:
+            measured = float(request.body["angle"])
+        except (KeyError, TypeError, ValueError):
+            return 400, fail("angle must be a number")
+        try:
+            result = hold_module.track(self.hold, self.slew, measured, self.audit)
+        except HoldNotEngaged:
+            return 409, fail("position hold is not engaged")
+        self._persist_hold()
+        return 200, ok({"track": result.to_dict(), "hold": views.hold_view(self)})
+
+    def handle_hold_confirm(self, request: Request) -> tuple[int, dict[str, Any]]:
+        released = hold_module.confirm(self.hold, self.audit)
+        if released:
+            slew_module.release_stop(self.slew)
+        self._persist_hold()
+        return 200, ok({"released": released, "hold": views.hold_view(self)})
+
+    def handle_hold_events(self, request: Request) -> tuple[int, dict[str, Any]]:
+        limit = _positive_int(request.query_first("limit"), 50)
+        events = self.hold.events_snapshot(limit)
+        return 200, ok([event.to_dict() for event in events])
+
+    def _persist_hold(self) -> None:
+        try:
+            hold_module.persist_hold(self.hold, self.store)
+        except StoreError as exc:
+            LOGGER.debug("best-effort hold persist skipped: %s", exc)
 
     # ------------------------------------------------------------------- wind
 
@@ -327,6 +402,12 @@ class Console:
                 hoist_module.persist_hoist(self.hoist, self.store)
             except StoreError as exc:
                 LOGGER.debug("best-effort hoist persist skipped after lower: %s", exc)
+        if command.action == crane_module.ACTION_STOP and command.axis in (
+            "",
+            crane_module.AXIS_SLEW,
+        ):
+            hold_module.engage(self.hold, self.slew.angle_now(), recorder=self.audit)
+            self._persist_hold()
         return 200, ok(crane.last_command().to_dict())
 
     def _book_keeping(self, command: crane_module.Command) -> None:

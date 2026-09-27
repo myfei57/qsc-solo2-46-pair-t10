@@ -57,6 +57,8 @@ def slew_view(console: "Console") -> dict[str, object]:
         "stopped": slew.is_stopped(),
         "wind_held": slew.held_by_wind(),
         "latch_held": slew.held_by_latch(),
+        "hold_engaged": console.hold.is_engaged(),
+        "hold_locked": console.hold.is_locked(),
         "faulted": slew.is_faulted(),
         "stop_count": slew.stop_count_now(),
         "last_stop_sequence": slew.last_stop_sequence_now(),
@@ -69,6 +71,24 @@ def slew_view(console: "Console") -> dict[str, object]:
         "ramp_target": console.ramp.target_now(),
         "ramp_velocity": console.ramp.velocity_now(),
         "ramp_on_target": slew_module.ramp_reached(console.ramp),
+    }
+
+
+def hold_view(console: "Console") -> dict[str, object]:
+    hold = console.hold
+    return {
+        "id": hold.id,
+        "engaged": hold.is_engaged(),
+        "locked": hold.is_locked(),
+        "target": hold.target_now(),
+        "tolerance": hold.tolerance_now(),
+        "angle": console.slew.angle_now(),
+        "drift": hold.drift_now(),
+        "within_tolerance": abs(hold.drift_now()) <= hold.tolerance_now(),
+        "peak_drift": hold.peak_drift_now(),
+        "corrections": hold.correction_count(),
+        "events": hold.event_count(),
+        "recent_events": [event.to_dict() for event in hold.events_snapshot(10)],
     }
 
 
@@ -195,6 +215,7 @@ def state_view(console: "Console") -> dict[str, object]:
     return {
         "zone": zone_view(console),
         "slew": slew_view(console),
+        "hold": hold_view(console),
         "trolley": trolley_view(console),
         "hoist": hoist_view(console),
         "wind": wind_view(console),
@@ -215,6 +236,7 @@ __all__ = [
     "cluster_view",
     "crane_view",
     "hoist_view",
+    "hold_view",
     "limit_view",
     "load_view",
     "nearest_pair_view",
