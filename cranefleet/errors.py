@@ -51,6 +51,30 @@ class SlewIdle(SlewError):
     """Raised when a swing is applied while the slew is not moving."""
 
 
+class HoldError(CraneFleetError):
+    """Base class for position-hold failures."""
+
+
+class HoldNotEngaged(HoldError):
+    """Raised when a hold operation arrives while the hold is inactive."""
+
+
+class HoldAlreadyEngaged(HoldError):
+    """Raised when the hold is engaged again without a release."""
+
+
+class HoldLocked(HoldError):
+    """Raised while a correction still waits for on-site confirmation."""
+
+
+class HoldNotLocked(HoldError):
+    """Raised when a confirmation arrives without a pending correction."""
+
+
+class HoldSlewMoving(HoldError):
+    """Raised when the hold is engaged before the slew has come to rest."""
+
+
 class TrolleyError(CraneFleetError):
     """Base class for trolley failures."""
 

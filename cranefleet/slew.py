@@ -73,6 +73,7 @@ class Slew:
         self.stopped = False
         self.wind_held = False
         self.latch_held = False
+        self.hold_locked = False
         self.axis_stopped: dict[str, bool] = {}
         self.stop_reasons: dict[str, str] = {}
         self.stop_sequences: dict[str, int] = {}
@@ -99,6 +100,10 @@ class Slew:
     def held_by_latch(self) -> bool:
         with self._lock:
             return self.latch_held
+
+    def held_by_hold(self) -> bool:
+        with self._lock:
+            return self.hold_locked
 
     def stop_count_now(self) -> int:
         with self._lock:
@@ -156,7 +161,7 @@ def start(slew: Slew, zone: ZoneState, store: Store, recorder: Audit | None = No
     """Allow a swing once the interlocks and the durable zone state agree."""
 
     with slew._lock:  # noqa: SLF001 - module-level functions share slew state
-        if slew.stopped or slew.wind_held or slew.latch_held:
+        if slew.stopped or slew.wind_held or slew.latch_held or slew.hold_locked:
             raise SlewBlocked("slew blocked by interlock")
         if not zone.is_durable():
             zone_module.persist(zone, store)
@@ -238,6 +243,28 @@ def release_wind_hold(slew: Slew) -> None:
 def release_latch_hold(slew: Slew) -> None:
     with slew._lock:  # noqa: SLF001
         slew.latch_held = False
+
+
+def set_hold_lock(slew: Slew, locked: bool) -> None:
+    """Hold or release the slew while the position hold is engaged."""
+
+    with slew._lock:  # noqa: SLF001
+        slew.hold_locked = locked
+
+
+def apply_drift(slew: Slew, offset: float) -> float:
+    """Apply a wind-driven angle offset that bypasses the motion command path."""
+
+    with slew._lock:  # noqa: SLF001
+        slew.angle += offset
+        return slew.angle
+
+
+def restore_angle(slew: Slew, angle: float) -> None:
+    """Drive the boom angle back to ``angle`` as part of a hold correction."""
+
+    with slew._lock:  # noqa: SLF001
+        slew.angle = angle
 
 
 def set_fault(slew: Slew, faulted: bool) -> None:

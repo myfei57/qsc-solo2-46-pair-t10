@@ -53,12 +53,15 @@ async function refresh() {
   const wind = data.wind || {};
   const limit = data.limit || {};
   const cluster = data.cluster || {};
+  const hold = data.hold || {};
   const pair = cluster.nearest_pair || {};
+  const holdStateText = { inactive: "未启用", holding: "保持中", locked: "待现场确认" }[hold.state] || "未启用";
   renderCards([
     ["塔吊数量", Object.keys(cluster.positions || {}).length],
     ["分区占用", (zone.occupants || []).length, zone.conflict ? "danger" : ""],
     ["冲突闩锁", zone.latch ? "锁定" : "释放", zone.latch ? "danger" : ""],
     ["回转状态", slew.moving ? "运转" : "停止", wind.active ? "warn" : ""],
+    ["回转保持", holdStateText + (hold.alert ? "（已回正）" : ""), hold.alert ? "danger" : hold.state === "holding" ? "warn" : ""],
     ["落钩状态", hoist.hook_lowered ? "已落钩" : "未落钩", hoist.hook_lowered ? "" : "warn"],
     ["制动状态", hoist.brake_engaged ? "抱闸" : "松闸"],
     ["风速", (wind.level || 0).toFixed(1) + " m/s", wind.active ? "danger" : ""],
@@ -70,10 +73,13 @@ async function refresh() {
   $("zone-data").textContent = JSON.stringify(zone, null, 2);
   $("hoist-data").textContent = JSON.stringify(hoist, null, 2);
   $("alarm-data").textContent = JSON.stringify({ wind, limit }, null, 2);
+  $("hold-data").textContent = JSON.stringify(hold, null, 2);
   $("config-data").textContent = JSON.stringify(data.config || {}, null, 2);
   const audit = await api("/api/audit?limit=15");
   $("audit-data").textContent = JSON.stringify(audit.data || [], null, 2);
   $("overview-log").textContent = JSON.stringify((audit.data || []).slice(0, 5), null, 2);
+  const holdEvents = await api("/api/hold/events?limit=10");
+  $("hold-events").textContent = JSON.stringify(holdEvents.data || [], null, 2);
 }
 
 document.querySelectorAll("#nav button").forEach((button) => {
@@ -164,6 +170,26 @@ $("slew-fault-btn").addEventListener("click", async () => {
 
 $("slew-recover-btn").addEventListener("click", async () => {
   await post("/api/slew/fault", { faulted: false });
+  refresh();
+});
+
+$("hold-engage-btn").addEventListener("click", async () => {
+  await post("/api/hold/engage");
+  refresh();
+});
+
+$("hold-drift-btn").addEventListener("click", async () => {
+  await post("/api/hold/drift", { angle: 1.2 });
+  refresh();
+});
+
+$("hold-confirm-btn").addEventListener("click", async () => {
+  await post("/api/hold/confirm", { operator: "现场" });
+  refresh();
+});
+
+$("hold-release-btn").addEventListener("click", async () => {
+  await post("/api/hold/release");
   refresh();
 });
 

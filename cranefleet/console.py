@@ -15,6 +15,7 @@ from . import cluster as fleet
 from . import config as site_config
 from . import crane as crane_module
 from . import hoist as hoist_module
+from . import hold as hold_module
 from . import limit as limit_module
 from . import slew as slew_module
 from . import trolley as trolley_module
@@ -29,6 +30,11 @@ from .errors import (
     CraneFleetError,
     FeedbackNotConfirmed,
     HoistBusy,
+    HoldAlreadyEngaged,
+    HoldLocked,
+    HoldNotEngaged,
+    HoldNotLocked,
+    HoldSlewMoving,
     HookNotLowered,
     SlewBlocked,
     SlewBusy,
@@ -38,6 +44,7 @@ from .errors import (
     ZoneNotDurable,
 )
 from .hoist import Drum, Hoist
+from .hold import Hold
 from .limit import Limit
 from .slew import Ramp, Slew, SpeedFeedback
 from .store import Store
@@ -94,6 +101,7 @@ class Console:
         audit: Audit,
         cranes: dict[str, Crane],
         feedback: SpeedFeedback,
+        hold: Hold,
         config: SiteConfig,
         web_root: str = "web",
     ) -> None:
@@ -108,6 +116,7 @@ class Console:
         self.audit = audit
         self.cranes = cranes
         self.feedback = feedback
+        self.hold = hold
         self.config = config
         self.web_root = web_root
         self.ramp = Ramp()
@@ -127,6 +136,12 @@ class Console:
             ("POST", "/api/slew/stop"): self.handle_slew_stop,
             ("POST", "/api/slew/target"): self.handle_slew_target,
             ("POST", "/api/slew/fault"): self.handle_slew_fault,
+            ("GET", "/api/hold/state"): self.handle_hold_state,
+            ("GET", "/api/hold/events"): self.handle_hold_events,
+            ("POST", "/api/hold/engage"): self.handle_hold_engage,
+            ("POST", "/api/hold/release"): self.handle_hold_release,
+            ("POST", "/api/hold/drift"): self.handle_hold_drift,
+            ("POST", "/api/hold/confirm"): self.handle_hold_confirm,
             ("POST", "/api/wind/alarm"): self.handle_wind_alarm,
             ("POST", "/api/wind/clear"): self.handle_wind_clear,
             ("POST", "/api/crane/command"): self.handle_crane_command,
@@ -249,6 +264,10 @@ class Console:
     def handle_slew_start(self, request: Request) -> tuple[int, dict[str, Any]]:
         if zone_module.is_latched(self.zone):
             return 409, fail("zone latch held")
+        if self.slew.held_by_hold():
+            if hold_module.is_locked(self.hold):
+                return 409, fail("correction pending on-site confirmation")
+            return 409, fail("position hold active")
         try:
             slew_module.start(self.slew, self.zone, self.store, self.audit)
         except ZoneNotDurable:
@@ -279,6 +298,77 @@ class Console:
         slew_module.set_fault(self.slew, faulted)
         self.audit.record(self.slew.id, "slew-fault", f"faulted={str(faulted).lower()}")
         return 200, ok(views.slew_view(self))
+
+    # ------------------------------------------------------------------- hold
+
+    def handle_hold_state(self, request: Request) -> tuple[int, dict[str, Any]]:
+        return 200, ok(views.hold_view(self))
+
+    def handle_hold_events(self, request: Request) -> tuple[int, dict[str, Any]]:
+        limit = _positive_int(request.query_first("limit"), 50)
+        events = hold_module.events_snapshot(self.hold, limit)
+        return 200, ok([event.to_dict() for event in events])
+
+    def handle_hold_engage(self, request: Request) -> tuple[int, dict[str, Any]]:
+        if not request.body_valid:
+            return 400, fail("bad request")
+        raw_target = request.body.get("target")
+        target = None if raw_target is None else _number(raw_target)
+        try:
+            hold_module.engage(self.hold, self.slew, self.config.hold_tolerance, self.audit, target)
+        except HoldSlewMoving:
+            return 409, fail("slew still moving")
+        except HoldAlreadyEngaged:
+            return 409, fail("hold already engaged")
+        try:
+            hold_module.persist(self.hold, self.store)
+        except StoreError as exc:
+            return 500, fail(str(exc))
+        return 200, ok(views.hold_view(self))
+
+    def handle_hold_release(self, request: Request) -> tuple[int, dict[str, Any]]:
+        try:
+            hold_module.release(self.hold, self.slew, self.audit)
+        except HoldLocked:
+            return 409, fail("correction pending on-site confirmation")
+        except HoldNotEngaged:
+            return 409, fail("hold not engaged")
+        try:
+            hold_module.persist(self.hold, self.store)
+        except StoreError as exc:
+            return 500, fail(str(exc))
+        return 200, ok(views.hold_view(self))
+
+    def handle_hold_drift(self, request: Request) -> tuple[int, dict[str, Any]]:
+        if not request.body_valid:
+            return 400, fail("bad request")
+        offset = _number(request.body.get("angle"))
+        try:
+            result = hold_module.drift(self.hold, self.slew, offset, self.audit)
+        except HoldNotEngaged:
+            return 409, fail("hold not engaged")
+        except HoldLocked:
+            return 409, fail("correction pending on-site confirmation")
+        if result.corrected:
+            try:
+                hold_module.persist(self.hold, self.store)
+            except StoreError as exc:
+                return 500, fail(str(exc))
+        return 200, ok({"drift": result.to_dict(), "hold": views.hold_view(self)})
+
+    def handle_hold_confirm(self, request: Request) -> tuple[int, dict[str, Any]]:
+        if not request.body_valid:
+            return 400, fail("bad request")
+        operator = str(request.body.get("operator") or "")
+        try:
+            hold_module.confirm(self.hold, operator, self.audit)
+        except HoldNotLocked:
+            return 409, fail("no correction awaiting confirmation")
+        try:
+            hold_module.persist(self.hold, self.store)
+        except StoreError as exc:
+            return 500, fail(str(exc))
+        return 200, ok(views.hold_view(self))
 
     # ------------------------------------------------------------------- wind
 

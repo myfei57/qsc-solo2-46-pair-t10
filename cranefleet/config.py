@@ -13,6 +13,7 @@ from .wind import ALARM_THRESHOLD
 CONFIG_KEY = "config/site"
 DEFAULT_SAFE_SEPARATION = 12.0
 DEFAULT_SITE_NAME = "华东三号工地"
+DEFAULT_HOLD_TOLERANCE = 0.5
 
 
 @dataclass(frozen=True)
@@ -21,20 +22,28 @@ class SiteConfig:
 
     site_name: str = DEFAULT_SITE_NAME
     safe_separation: float = DEFAULT_SAFE_SEPARATION
+    hold_tolerance: float = DEFAULT_HOLD_TOLERANCE
 
     def to_dict(self) -> dict[str, object]:
-        return {"site_name": self.site_name, "safe_separation": self.safe_separation}
+        return {
+            "site_name": self.site_name,
+            "safe_separation": self.safe_separation,
+            "hold_tolerance": self.hold_tolerance,
+        }
 
     @classmethod
     def from_dict(cls, payload: dict[str, object]) -> "SiteConfig":
         try:
             name = str(payload.get("site_name") or DEFAULT_SITE_NAME)
             separation = float(payload.get("safe_separation", DEFAULT_SAFE_SEPARATION))
+            tolerance = float(payload.get("hold_tolerance", DEFAULT_HOLD_TOLERANCE))
         except (TypeError, ValueError) as exc:
             raise ConfigError("invalid site configuration") from exc
         if separation <= 0:
             raise ConfigError("safe_separation must be positive")
-        return cls(site_name=name, safe_separation=separation)
+        if tolerance <= 0:
+            raise ConfigError("hold_tolerance must be positive")
+        return cls(site_name=name, safe_separation=separation, hold_tolerance=tolerance)
 
 
 def load_config(store: Store) -> SiteConfig:
@@ -55,6 +64,7 @@ def config_view(config: SiteConfig, cluster: Cluster) -> dict[str, object]:
     return {
         "site_name": config.site_name,
         "safe_separation": config.safe_separation,
+        "hold_tolerance": config.hold_tolerance,
         "alarm_threshold": ALARM_THRESHOLD,
         "surveyed_cranes": len(current_positions(cluster)),
     }

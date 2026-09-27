@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from . import cluster as fleet
+from . import hold as hold_module
 from . import limit as limit_module
 from . import slew as slew_module
 from . import zone as zone_module
@@ -57,6 +58,7 @@ def slew_view(console: "Console") -> dict[str, object]:
         "stopped": slew.is_stopped(),
         "wind_held": slew.held_by_wind(),
         "latch_held": slew.held_by_latch(),
+        "hold_locked": slew.held_by_hold(),
         "faulted": slew.is_faulted(),
         "stop_count": slew.stop_count_now(),
         "last_stop_sequence": slew.last_stop_sequence_now(),
@@ -93,6 +95,28 @@ def hoist_view(console: "Console") -> dict[str, object]:
         "drum_layers": drum.layer_count(),
         "cable_height": drum.height_from_cable(drum.wound_total()),
         "feedback_speed": console.feedback.speed_now(),
+    }
+
+
+def hold_view(console: "Console") -> dict[str, object]:
+    hold = console.hold
+    state = hold.state_now()
+    angle = console.slew.angle_now()
+    deviation = angle - hold.target_now() if state != hold_module.STATE_INACTIVE else 0.0
+    return {
+        "crane_id": hold.crane_id,
+        "state": state,
+        "target": hold.target_now(),
+        "tolerance": hold.tolerance_now(),
+        "angle": angle,
+        "deviation": deviation,
+        "alert": hold.has_alert(),
+        "last_drift": hold.last_drift_now(),
+        "peak_drift": hold.peak_drift_now(),
+        "drift_observations": hold.drift_observations_now(),
+        "correction_count": hold.correction_count_now(),
+        "confirmed_by": hold.confirmed_by_now(),
+        "event_count": hold.event_count(),
     }
 
 
@@ -197,6 +221,7 @@ def state_view(console: "Console") -> dict[str, object]:
         "slew": slew_view(console),
         "trolley": trolley_view(console),
         "hoist": hoist_view(console),
+        "hold": hold_view(console),
         "wind": wind_view(console),
         "limit": limit_view(console),
         "cluster": cluster_view(console),
@@ -215,6 +240,7 @@ __all__ = [
     "cluster_view",
     "crane_view",
     "hoist_view",
+    "hold_view",
     "limit_view",
     "load_view",
     "nearest_pair_view",
